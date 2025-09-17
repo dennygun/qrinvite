@@ -1,252 +1,79 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>QR Attendance Scanner, HTML single file</title>
-  <style>
-    :root{--bg:#0b1220;--card:#0f1724;--muted:#9aa4b2;--accent:#1f8cff}
-    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:#e6eef8;margin:0;padding:20px}
-    .wrap{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 420px;gap:18px}
-    .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));padding:14px;border-radius:12px;box-shadow:0 4px 20px rgba(2,6,23,0.6)}
-    h1{font-size:18px;margin:0 0 10px}
-    select,input,button{font-size:14px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
-    .controls{display:flex;gap:8px;flex-wrap:wrap}
-    video{width:100%;height:360px;object-fit:cover;border-radius:10px;background:#000}
-    table{width:100%;border-collapse:collapse;font-size:13px}
-    th,td{padding:8px;border-top:1px solid rgba(255,255,255,0.03);text-align:left}
-    .muted{color:var(--muted);font-size:13px}
-    .pill{display:inline-block;padding:6px 8px;border-radius:999px;background:rgba(255,255,255,0.03)}
-    .small{font-size:13px}
-    input[type=file]{display:none}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QR Attendance Scanner</title>
+<style>
+body { font-family: sans-serif; background: #111; color: #eee; margin: 0; padding: 1rem; }
+h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+button, select, label { margin: 0.25rem 0; padding: 0.5rem; border-radius: 6px; border: none; }
+button { cursor: pointer; }
+table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+th, td { border: 1px solid #555; padding: 0.5rem; word-break: break-word; }
+video { width: 100%; max-height: 240px; background: black; border-radius: 8px; }
+.controls { margin: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.msg { margin-top: 0.5rem; color: yellow; }
+</style>
+<script src="https://unpkg.com/@zxing/browser@latest"></script>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>QR Attendance Scanner, HTML single file</h1>
-      <p class="muted">Open camera, scan existing QR codes from another app, track repeats, store locally, export or import data</p>
+<h1>QR Attendance Scanner</h1>
 
-      <div style="margin-top:12px" class="small">
-        <label>Camera,</label>
-        <select id="cameraSelect"></select>
-        <div style="margin-top:8px" class="controls">
-          <button id="startBtn">Start camera</button>
-          <button id="stopBtn" disabled>Stop camera</button>
-          <button id="exportCsvBtn">Export CSV</button>
-          <label class="pill" title="Import JSON mapping or previous scans">
-            Import JSON
-            <input id="importJson" type="file" accept="application/json" />
-          </label>
-          <button id="clearBtn">Clear data</button>
-        </div>
-        <p id="status" class="muted small" style="margin-top:8px"></p>
-      </div>
 
-      <div style="margin-top:12px">
-        <video id="video" playsinline></video>
-        <canvas id="overlay" style="display:none"></canvas>
-      </div>
+<div>
+<label for="deviceSelect">Camera device</label><br>
+<select id="deviceSelect"></select>
+</div>
+<div class="controls">
+<button id="startBtn">Start camera</button>
+<button id="stopBtn">Stop camera</button>
+<button id="exportBtn">Export CSV</button>
+<label style="background:#555; color:#fff; padding:0.5rem; cursor:pointer;">
+Import JSON<input type="file" id="importFile" accept="application/json" style="display:none">
+</label>
+<button id="clearBtn">Clear data</button>
+</div>
+<div class="msg" id="msg"></div>
 
-      <div style="margin-top:10px" class="card small">
-        <strong>Last scanned,</strong>
-        <div id="last" class="muted">No scans yet</div>
-      </div>
-    </div>
 
-    <div>
-      <div class="card">
-        <h2 style="margin:0 0 8px">Scanned codes, summary</h2>
-        <div style="max-height:520px;overflow:auto">
-          <table id="table">
-            <thead><tr><th>Code</th><th>Count</th><th>First</th><th>Last</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <p class="muted small" style="margin-top:8px">Data stored in localStorage, works offline, use export to export CSV, import JSON to restore or load mappings</p>
-      </div>
+<video id="preview" playsinline muted></video>
 
-      <div class="card" style="margin-top:12px">
-        <h3 style="margin:0 0 8px">Notes</h3>
-        <ul class="small muted">
-          <li>Tracks the QR text string, increments count on repeat scans</li>
-          <li>To map codes to attendee names, import a JSON mapping, or implement server lookup</li>
-          <li>If you want server sync, I can provide a minimal backend example</li>
-        </ul>
-      </div>
-    </div>
-  </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-  <script>
-    // avoid em or en dashes, use commas or parentheses instead
-    const video = document.getElementById('video');
-    const overlay = document.getElementById('overlay');
-    const cameraSelect = document.getElementById('cameraSelect');
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const exportCsvBtn = document.getElementById('exportCsvBtn');
-    const importJson = document.getElementById('importJson');
-    const clearBtn = document.getElementById('clearBtn');
-    const statusEl = document.getElementById('status');
-    const lastEl = document.getElementById('last');
-    const tableBody = document.querySelector('#table tbody');
+<div>
+<h3>Last scanned</h3>
+<div id="lastScan">No scans yet</div>
+</div>
 
-    let stream = null;
-    let scanning = false;
-    let scanLoopId = null;
 
-    // scans structure, keyed by code, value {count, firstSeen, lastSeen, history:[{ts}]}
-    const STORAGE_KEY = 'qr_scans_html_v1';
-    let scans = loadScans();
+<div>
+<h3>Scanned codes summary</h3>
+<div style="max-height:300px; overflow:auto">
+<table id="scanTable">
+<thead>
+<tr><th>Code</th><th>First seen</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
+</div>
 
-    function loadScans(){
-      try{
-        const s = localStorage.getItem(STORAGE_KEY);
-        return s ? JSON.parse(s) : {};
-      }catch(e){
-        console.error(e);return {}
-      }
-    }
-    function saveScans(){
-      try{localStorage.setItem(STORAGE_KEY, JSON.stringify(scans));}catch(e){console.error(e)}
-    }
 
-    function fmtIso(ts){
-      try{return new Date(ts).toLocaleString();}catch(e){return ts}
-    }
+<script>
+const preview = document.getElementById('preview');
+const deviceSelect = document.getElementById('deviceSelect');
+const msg = document.getElementById('msg');
+const lastScanDiv = document.getElementById('lastScan');
+const tableBody = document.querySelector('#scanTable tbody');
 
-    function updateTable(){
-      tableBody.innerHTML = '';
-      const rows = Object.entries(scans)
-        .sort((a,b)=> (b[1].lastSeen || '').localeCompare(a[1].lastSeen || ''));
-      for(const [code,e] of rows){
-        const tr = document.createElement('tr');
-        const tdCode = document.createElement('td'); tdCode.textContent = code; tdCode.style.wordBreak='break-all';
-        const tdCount = document.createElement('td'); tdCount.textContent = e.count;
-        const tdFirst = document.createElement('td'); tdFirst.textContent = fmtIso(e.firstSeen);
-        const tdLast = document.createElement('td'); tdLast.textContent = fmtIso(e.lastSeen);
-        tr.appendChild(tdCode);tr.appendChild(tdCount);tr.appendChild(tdFirst);tr.appendChild(tdLast);
-        tableBody.appendChild(tr);
-      }
-      if(!rows.length) lastEl.textContent = 'No scans yet';
-    }
 
-    function setStatus(text){ statusEl.textContent = text; }
+let codeReader = null;
+let scans = JSON.parse(localStorage.getItem('qr_scans')||'{}');
 
-    async function enumerateCameras(){
-      try{
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const cams = devices.filter(d=>d.kind==='videoinput');
-        cameraSelect.innerHTML = '';
-        cams.forEach((c,idx)=>{
-          const opt = document.createElement('option');
-          opt.value = c.deviceId;
-          opt.textContent = c.label || 'Camera '+(idx+1);
-          cameraSelect.appendChild(opt);
-        });
-        if(cams.length===0) cameraSelect.appendChild(new Option('No camera found',''));
-      }catch(e){
-        console.error(e);cameraSelect.innerHTML='';cameraSelect.appendChild(new Option('Enumeration failed',''));
-      }
-    }
 
-    async function startCamera(){
-      if(scanning) return;
-      const deviceId = cameraSelect.value || undefined;
-      const constraints = { video: deviceId ? { deviceId:{exact:deviceId} } : { facingMode:'environment' } };
-      try{
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = stream; await video.play();
-        overlay.width = video.videoWidth; overlay.height = video.videoHeight;
-        scanning = true; startBtn.disabled = true; stopBtn.disabled = false; setStatus('Scanning...');
-        tick();
-      }catch(e){
-        console.error(e); setStatus('Could not start camera, check permissions, or try another camera');
-      }
-    }
-
-    function stopCamera(){
-      if(!scanning) return;
-      scanning = false; startBtn.disabled = false; stopBtn.disabled = true; setStatus('Stopped');
-      if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
-      if(scanLoopId) cancelAnimationFrame(scanLoopId);
-    }
-
-    function handleDetectedCode(text){
-      const now = new Date().toISOString();
-      const existing = scans[text];
-      const entry = existing ? { ...existing, count: existing.count+1, lastSeen: now, history:[...existing.history, {ts:now}] } : { count:1, firstSeen: now, lastSeen: now, history:[{ts:now}] };
-      scans[text] = entry; saveScans(); updateTable();
-      lastEl.textContent = `${text}, count ${entry.count}, last ${fmtIso(entry.lastSeen)}`;
-    }
-
-    function tick(){
-      if(!scanning) return;
-      if(video.readyState === video.HAVE_ENOUGH_DATA){
-        const w = video.videoWidth, h = video.videoHeight;
-        if(w && h){
-          overlay.width = w; overlay.height = h; const ctx = overlay.getContext('2d');
-          ctx.drawImage(video,0,0,w,h);
-          try{
-            const imageData = ctx.getImageData(0,0,w,h);
-            const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts:'attemptBoth' });
-            if(code && code.data){
-              // drawn box
-              drawLine(ctx, code.location.topLeftCorner, code.location.topRightCorner);
-              drawLine(ctx, code.location.topRightCorner, code.location.bottomRightCorner);
-              drawLine(ctx, code.location.bottomRightCorner, code.location.bottomLeftCorner);
-              drawLine(ctx, code.location.bottomLeftCorner, code.location.topLeftCorner);
-              handleDetectedCode(code.data);
-            }
-          }catch(e){ console.error(e); }
-        }
-      }
-      scanLoopId = requestAnimationFrame(tick);
-    }
-
-    function drawLine(ctx, a, b){ ctx.strokeStyle='rgba(0,255,0,0.8)'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
-
-    function exportCsv(){
-      const rows = ['code,count,firstSeen,lastSeen'];
-      for(const [code,e] of Object.entries(scans)){
-        rows.push('"'+code.replace(/"/g,'""')+'",'+e.count+','+e.firstSeen+','+e.lastSeen);
-      }
-      const blob = new Blob([rows.join('\n')],{type:'text/csv'});
-      const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='qr_scans.csv'; a.click(); URL.revokeObjectURL(url);
-    }
-
-    importJson.addEventListener('change', e=>{
-      const file = e.target.files[0]; if(!file) return; const reader = new FileReader();
-      reader.onload = ev=>{
-        try{
-          const obj = JSON.parse(ev.target.result);
-          // merge rather than replace, so imported mappings can be used together
-          scans = { ...scans, ...obj }; saveScans(); updateTable(); setStatus('Imported json successfully');
-        }catch(err){ setStatus('Invalid json file'); }
-      };
-      reader.readAsText(file);
-    });
-
-    clearBtn.addEventListener('click', ()=>{
-      if(!confirm('Clear all scan data, are you sure?')) return; scans={}; saveScans(); updateTable(); lastEl.textContent='No scans yet';
-    });
-
-    startBtn.addEventListener('click', startCamera);
-    stopBtn.addEventListener('click', stopCamera);
-    exportCsvBtn.addEventListener('click', exportCsv);
-
-    cameraSelect.addEventListener('change', ()=>{
-      // if scanning, restart with new camera
-      if(scanning){ stopCamera(); startCamera(); }
-    });
-
-    // initial
-    (async ()=>{
-      updateTable(); await enumerateCameras();
-      // if permissions were granted earlier, camera labels may be visible
-      navigator.mediaDevices.addEventListener('devicechange', enumerateCameras);
-    })();
-  </script>
-</body>
+function renderTable(){
+tableBody.innerHTML = '';
+Object.entries(scans).sort((a,b)=>b[1].firstSeen.localeCompare(a[1].firstSeen)).forEach(([code,e])=>{
+const tr = document.createElement('tr');
+tr.innerHTML = `<td>${code}</td><td>${e.firstSeen}</td>`;
 </html>
