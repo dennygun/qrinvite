@@ -75,5 +75,4 @@ function renderTable(){
 tableBody.innerHTML = '';
 Object.entries(scans).sort((a,b)=>b[1].firstSeen.localeCompare(a[1].firstSeen)).forEach(([code,e])=>{
 const tr = document.createElement('tr');
-tr.innerHTML = `<td>${code}</td><td>${e.firstSeen}</td>`;
 </html>
