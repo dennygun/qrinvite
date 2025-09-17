@@ -13,7 +13,6 @@
     th, td { border:1px solid #555; padding:0.5rem; word-break:break-word; }
     .controls { margin:0.5rem 0; display:flex; flex-wrap:wrap; gap:0.5rem; }
     .msg { margin-top:0.5rem; color:yellow; }
-    .warning { margin-top:0.5rem; color:#ff5555; font-weight:bold; }
     #reader { width:100%; max-width:400px; }
   </style>
   <script src="https://unpkg.com/html5-qrcode"></script>
@@ -31,7 +30,6 @@
     <button id="clearBtn">Clear data</button>
   </div>
   <div class="msg" id="msg"></div>
-  <div class="warning" id="warning"></div>
 
   <div id="reader"></div>
 
@@ -54,7 +52,6 @@
 
   <script>
     const msg = document.getElementById('msg');
-    const warning = document.getElementById('warning');
     const lastScanDiv = document.getElementById('lastScan');
     const tableBody = document.querySelector('#scanTable tbody');
 
@@ -78,12 +75,12 @@
         const oscillator = ctx.createOscillator();
         const gainNode = ctx.createGain();
         oscillator.type = "sine";
-        oscillator.frequency.value = 800;
-        gainNode.gain.value = 0.1;
+        oscillator.frequency.value = 800; // frequency in Hz
+        gainNode.gain.value = 0.1; // volume
         oscillator.connect(gainNode);
         gainNode.connect(ctx.destination);
         oscillator.start();
-        oscillator.stop(ctx.currentTime + 0.2);
+        oscillator.stop(ctx.currentTime + 0.2); // 0.2s beep
       } catch (e) {
         console.warn("Beep not supported:", e);
       }
@@ -95,18 +92,17 @@
         return; // ignore scans if within 3s cooldown
       }
       lastScanTime = nowTime;
-      warning.textContent = ""; // clear old warning
 
       const now=new Date().toISOString();
       if(scans[text]){
-        warning.textContent = ⚠️ This QR code has already been scanned!";
+        alert("This QR code has already been scanned!");
         return;
       }
       scans[text]={firstSeen:now};
       localStorage.setItem('qr_scans',JSON.stringify(scans));
       lastScanDiv.innerHTML=`Code: ${text}<br>First: ${now}`;
       renderTable();
-      playBeep();
+      playBeep(); // play beep only for new scans
     }
 
     document.getElementById('startBtn').onclick = async()=>{
@@ -147,7 +143,7 @@
 
     document.getElementById('clearBtn').onclick = ()=>{
       if(confirm("Clear all data?")){
-        scans={}; localStorage.removeItem('qr_scans'); renderTable(); lastScanDiv.textContent="No scans yet"; warning.textContent="";
+        scans={}; localStorage.removeItem('qr_scans'); renderTable(); lastScanDiv.textContent="No scans yet";
       }
     };
 
@@ -159,7 +155,7 @@
         try{
           scans=JSON.parse(ev.target.result);
           localStorage.setItem('qr_scans',JSON.stringify(scans));
-          renderTable(); msg.textContent="Imported"; warning.textContent="";
+          renderTable(); msg.textContent="Imported";
         }catch(err){ msg.textContent="Invalid JSON"; }
       };
       reader.readAsText(file);
