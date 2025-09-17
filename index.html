@@ -59,6 +59,31 @@
     let html5QrCode = null;
     let lastScanTime = 0; // cooldown tracker
 
+    // Shared audio context
+    let audioCtx = null;
+    function initAudio(){
+      if(!audioCtx){
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+    }
+
+    function beep(times=1){
+      if(!audioCtx) return;
+      const now = audioCtx.currentTime;
+      for(let i=0;i<times;i++){
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 800;
+        gain.gain.value = 0.1;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        const startT = now + i*0.25;
+        osc.start(startT);
+        osc.stop(startT + 0.2);
+      }
+    }
+
     function renderTable(){
       tableBody.innerHTML = '';
       Object.entries(scans).forEach(([code,e])=>{
@@ -69,31 +94,6 @@
     }
     renderTable();
 
-    function playBeep(times=1){
-      try {
-        let count = 0;
-        function beepOnce(){
-          const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          const oscillator = ctx.createOscillator();
-          const gainNode = ctx.createGain();
-          oscillator.type = "sine";
-          oscillator.frequency.value = 800; 
-          gainNode.gain.value = 0.1; 
-          oscillator.connect(gainNode);
-          gainNode.connect(ctx.destination);
-          oscillator.start();
-          oscillator.stop(ctx.currentTime + 0.2);
-          count++;
-          if(count < times){
-            setTimeout(beepOnce, 300); // 0.3s between beeps
-          }
-        }
-        beepOnce();
-      } catch (e) {
-        console.warn("Beep not supported:", e);
-      }
-    }
-
     function handleDetectedCode(text){
       const nowTime = Date.now();
       if(nowTime - lastScanTime < 3000){ 
@@ -103,19 +103,25 @@
 
       const now=new Date().toISOString();
       if(scans[text]){
-        // Already scanned → triple beep
-        playBeep(3);
-        alert("This QR code has already been scanned!");
+        msg.style.color = "red";
+        msg.textContent = "This QR code has already been scanned!";
+        beep(3); // triple beep for duplicates
         return;
       }
       scans[text]={firstSeen:now};
       localStorage.setItem('qr_scans',JSON.stringify(scans));
       lastScanDiv.innerHTML=`Code: ${text}<br>First: ${now}`;
       renderTable();
-      playBeep(1); // single beep for new scans
+      msg.style.color = "lightgreen";
+      msg.textContent = "New code scanned";
+      beep(1); // single beep for new scan
     }
 
     document.getElementById('startBtn').onclick = async()=>{
+      initAudio();
+      if(audioCtx.state === 'suspended'){
+        await audioCtx.resume();
+      }
       if(!html5QrCode){
         html5QrCode=new Html5Qrcode("reader");
       }
@@ -125,9 +131,11 @@
           { fps:10, qrbox:250 },
           (decodedText)=>{ handleDetectedCode(decodedText); }
         );
+        msg.style.color = "yellow";
         msg.textContent="Camera started";
       }catch(err){
         console.error(err);
+        msg.style.color = "red";
         msg.textContent="Failed to start camera";
       }
     };
@@ -135,6 +143,7 @@
     document.getElementById('stopBtn').onclick = async()=>{
       if(html5QrCode){
         await html5QrCode.stop();
+        msg.style.color = "yellow";
         msg.textContent="Camera stopped";
       }
     };
@@ -165,8 +174,8 @@
         try{
           scans=JSON.parse(ev.target.result);
           localStorage.setItem('qr_scans',JSON.stringify(scans));
-          renderTable(); msg.textContent="Imported";
-        }catch(err){ msg.textContent="Invalid JSON"; }
+          renderTable(); msg.style.color="yellow"; msg.textContent="Imported";
+        }catch(err){ msg.style.color="red"; msg.textContent="Invalid JSON"; }
       };
       reader.readAsText(file);
     };
