@@ -1,163 +1,72 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QR Attendance Scanner (Google Sheets)</title>
+  <meta charset="UTF-8">
+  <title>QR Attendance Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
   <style>
-    body { font-family: sans-serif; background:#111; color:#eee; margin:0; padding:1rem; }
-    h1 { font-size:1.5rem; margin-bottom:1rem; }
-    button, label { margin:0.25rem 0; padding:0.5rem; border-radius:6px; border:none; }
-    button { cursor:pointer; }
-    table { width:100%; border-collapse:collapse; margin-top:1rem; background:#222; }
-    th, td { border:1px solid #555; padding:0.5rem; word-break:break-word; }
-    .controls { margin:0.5rem 0; display:flex; flex-wrap:wrap; gap:0.5rem; }
-    .msg { margin-top:0.5rem; }
-    #reader { width:100%; max-width:400px; }
-    .ok { color:lightgreen; }
-    .warn { color:orange; }
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    #reader { width: 300px; margin: auto; }
+    #log { margin-top: 20px; max-height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
   </style>
-  <script src="https://unpkg.com/html5-qrcode"></script>
 </head>
 <body>
   <h1>QR Attendance Scanner</h1>
-
-  <div class="controls">
-    <button id="startBtn">Start camera</button>
-    <button id="stopBtn">Stop camera</button>
-    <button id="refreshBtn">Refresh history</button>
-  </div>
-  <div class="msg" id="msg"></div>
-
   <div id="reader"></div>
-
-  <div>
-    <h3>Last scanned</h3>
-    <div id="lastScan">No scans yet</div>
-  </div>
-
-  <div>
-    <h3>Scanned codes summary (from Google Sheet)</h3>
-    <div style="max-height:300px; overflow:auto">
-      <table id="scanTable">
-        <thead>
-          <tr><th>Code</th><th>Timestamp</th><th>Device</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </div>
+  <div id="log"></div>
 
   <script>
-    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw1Kj_uNOxmgmfihNzL91eHm-0AbBnxKsCA_-HYMMawNjaXihuvpCaZc5XF1X5aRbjV/exec"; // <-- paste your Apps Script web app URL here
+    const logDiv = document.getElementById("log");
+    let lastScanTime = 0;
+    const scanInterval = 3000; // 3 seconds debounce
 
-    const msg = document.getElementById('msg');
-    const lastScanDiv = document.getElementById('lastScan');
-    const tableBody = document.querySelector('#scanTable tbody');
-    let html5QrCode = null;
-    let lastScanTime = 0; // cooldown
+    // Google Apps Script endpoint (replace with your deployed web app URL)
+    const SHEET_URL = "https://script.google.com/macros/s/AKfycbw1Kj_uNOxmgmfihNzL91eHm-0AbBnxKsCA_-HYMMawNjaXihuvpCaZc5XF1X5aRbjV/exec";
 
-    function playBeep(){
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine"; osc.frequency.value = 800;
-        gain.gain.value = 0.1;
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.start(); osc.stop(ctx.currentTime + 0.2);
-      } catch(e){ console.warn("Beep not supported:", e); }
+    function logMessage(msg) {
+      const p = document.createElement("p");
+      p.textContent = msg;
+      logDiv.prepend(p);
     }
 
-    function playTripleBeep(){
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        for(let i=0;i<3;i++){
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "sine"; osc.frequency.value = 400;
-          gain.gain.value = 0.15;
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.start(ctx.currentTime + i*0.3);
-          osc.stop(ctx.currentTime + i*0.3 + 0.2);
-        }
-      } catch(e){ console.warn("Beep not supported:", e); }
-    }
-
-    async function saveScanToSheet(code){
-      const res = await fetch(SCRIPT_URL, {
-        method:"POST",
-        body: JSON.stringify({ code: code, device: navigator.userAgent }),
+    function sendToSheet(qrCode) {
+      fetch(SHEET_URL, {
+        method: "POST",
+        body: JSON.stringify({ code: qrCode }),
         headers: { "Content-Type": "application/json" }
-      });
-      return await res.json();
+      })
+      .then(res => res.text())
+      .then(data => logMessage("Saved: " + data))
+      .catch(err => logMessage("Error: " + err));
     }
 
-    async function loadScansFromSheet(){
-      const res = await fetch(SCRIPT_URL);
-      return await res.json(); // array of rows
-    }
-
-    async function renderTable(data){
-      tableBody.innerHTML = "";
-      // Skip header row (row[0] is header if present)
-      data.slice(1).forEach(row=>{
-        const tr=document.createElement("tr");
-        tr.innerHTML = `<td>${row[0]}</td><td>${row[1]}</td><td>${row[2]}</td>`;
-        tableBody.appendChild(tr);
-      });
-    }
-
-    async function handleDetectedCode(text){
-      const nowTime = Date.now();
-      if(nowTime - lastScanTime < 3000) return; // 3s cooldown
-      lastScanTime = nowTime;
-
-      const result = await saveScanToSheet(text);
-      const now = new Date().toISOString();
-      if(result.status === "duplicate"){
-        msg.textContent = "⚠️ Already scanned!"; msg.className="warn";
-        lastScanDiv.innerHTML=`Duplicate: ${text}<br>Time: ${now}`;
-        playTripleBeep();
-      } else {
-        msg.textContent = "✅ New scan saved!"; msg.className="ok";
-        lastScanDiv.innerHTML=`Code: ${text}<br>First: ${now}`;
-        playBeep();
+    function onScanSuccess(decodedText) {
+      const now = Date.now();
+      if (now - lastScanTime < scanInterval) {
+        return; // prevent multiple scans
       }
-      renderTable(await loadScansFromSheet());
+      lastScanTime = now;
+
+      logMessage("Scanned: " + decodedText);
+      sendToSheet(decodedText);
     }
 
-    document.getElementById('startBtn').onclick = async()=>{
-      if(!html5QrCode){
-        html5QrCode=new Html5Qrcode("reader");
-      }
-      try{
-        await html5QrCode.start(
-          { facingMode:"environment" },
-          { fps:10, qrbox:250 },
-          (decodedText)=>{ handleDetectedCode(decodedText); }
+    function onScanFailure(error) {
+      // ignore, scanner keeps running
+    }
+
+    const html5QrCode = new Html5Qrcode("reader");
+    Html5Qrcode.getCameras().then(cameras => {
+      if (cameras && cameras.length) {
+        html5QrCode.start(
+          cameras[0].id,
+          { fps: 10, qrbox: 250 },
+          onScanSuccess,
+          onScanFailure
         );
-        msg.textContent="Camera started"; msg.className="";
-      }catch(err){
-        console.error(err);
-        msg.textContent="Failed to start camera";
       }
-    };
-
-    document.getElementById('stopBtn').onclick = async()=>{
-      if(html5QrCode){
-        await html5QrCode.stop();
-        msg.textContent="Camera stopped"; msg.className="";
-      }
-    };
-
-    document.getElementById('refreshBtn').onclick = async()=>{
-      renderTable(await loadScansFromSheet());
-      msg.textContent="History refreshed"; msg.className="";
-    };
-
-    // Initial load
-    (async()=>{ renderTable(await loadScansFromSheet()); })();
+    }).catch(err => logMessage("Camera error: " + err));
   </script>
 </body>
 </html>
+
