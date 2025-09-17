@@ -3,17 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QR Attendance Scanner</title>
+  <title>QR Attendance Scanner (Google Sheets)</title>
   <style>
     body { font-family: sans-serif; background:#111; color:#eee; margin:0; padding:1rem; }
     h1 { font-size:1.5rem; margin-bottom:1rem; }
-    button, select, label { margin:0.25rem 0; padding:0.5rem; border-radius:6px; border:none; }
+    button, label { margin:0.25rem 0; padding:0.5rem; border-radius:6px; border:none; }
     button { cursor:pointer; }
-    table { width:100%; border-collapse:collapse; margin-top:1rem; }
+    table { width:100%; border-collapse:collapse; margin-top:1rem; background:#222; }
     th, td { border:1px solid #555; padding:0.5rem; word-break:break-word; }
     .controls { margin:0.5rem 0; display:flex; flex-wrap:wrap; gap:0.5rem; }
-    .msg { margin-top:0.5rem; color:yellow; }
+    .msg { margin-top:0.5rem; }
     #reader { width:100%; max-width:400px; }
+    .ok { color:lightgreen; }
+    .warn { color:orange; }
   </style>
   <script src="https://unpkg.com/html5-qrcode"></script>
 </head>
@@ -23,11 +25,7 @@
   <div class="controls">
     <button id="startBtn">Start camera</button>
     <button id="stopBtn">Stop camera</button>
-    <button id="exportBtn">Export CSV</button>
-    <label style="background:#555; color:#fff; padding:0.5rem; cursor:pointer;">
-      Import JSON<input type="file" id="importFile" accept="application/json" style="display:none">
-    </label>
-    <button id="clearBtn">Clear data</button>
+    <button id="refreshBtn">Refresh history</button>
   </div>
   <div class="msg" id="msg"></div>
 
@@ -39,11 +37,11 @@
   </div>
 
   <div>
-    <h3>Scanned codes summary</h3>
+    <h3>Scanned codes summary (from Google Sheet)</h3>
     <div style="max-height:300px; overflow:auto">
       <table id="scanTable">
         <thead>
-          <tr><th>Code</th><th>First seen</th></tr>
+          <tr><th>Code</th><th>Timestamp</th><th>Device</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -51,77 +49,85 @@
   </div>
 
   <script>
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw1Kj_uNOxmgmfihNzL91eHm-0AbBnxKsCA_-HYMMawNjaXihuvpCaZc5XF1X5aRbjV/exec"; // <-- paste your Apps Script web app URL here
+
     const msg = document.getElementById('msg');
     const lastScanDiv = document.getElementById('lastScan');
     const tableBody = document.querySelector('#scanTable tbody');
-
-    let scans = JSON.parse(localStorage.getItem('qr_scans')||'{}');
     let html5QrCode = null;
-    let lastScanTime = 0; // cooldown tracker
+    let lastScanTime = 0; // cooldown
 
-    // Shared audio context
-    let audioCtx = null;
-    function initAudio(){
-      if(!audioCtx){
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-    }
-
-    function beep(times=1){
-      if(!audioCtx) return;
-      const now = audioCtx.currentTime;
-      for(let i=0;i<times;i++){
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = "sine";
-        osc.frequency.value = 800;
+    function playBeep(){
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine"; osc.frequency.value = 800;
         gain.gain.value = 0.1;
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        const startT = now + i*0.25;
-        osc.start(startT);
-        osc.stop(startT + 0.2);
-      }
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(); osc.stop(ctx.currentTime + 0.2);
+      } catch(e){ console.warn("Beep not supported:", e); }
     }
 
-    function renderTable(){
-      tableBody.innerHTML = '';
-      Object.entries(scans).forEach(([code,e])=>{
-        const tr=document.createElement('tr');
-        tr.innerHTML = `<td>${code}</td><td>${e.firstSeen}</td>`;
+    function playTripleBeep(){
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        for(let i=0;i<3;i++){
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine"; osc.frequency.value = 400;
+          gain.gain.value = 0.15;
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(ctx.currentTime + i*0.3);
+          osc.stop(ctx.currentTime + i*0.3 + 0.2);
+        }
+      } catch(e){ console.warn("Beep not supported:", e); }
+    }
+
+    async function saveScanToSheet(code){
+      const res = await fetch(SCRIPT_URL, {
+        method:"POST",
+        body: JSON.stringify({ code: code, device: navigator.userAgent }),
+        headers: { "Content-Type": "application/json" }
+      });
+      return await res.json();
+    }
+
+    async function loadScansFromSheet(){
+      const res = await fetch(SCRIPT_URL);
+      return await res.json(); // array of rows
+    }
+
+    async function renderTable(data){
+      tableBody.innerHTML = "";
+      // Skip header row (row[0] is header if present)
+      data.slice(1).forEach(row=>{
+        const tr=document.createElement("tr");
+        tr.innerHTML = `<td>${row[0]}</td><td>${row[1]}</td><td>${row[2]}</td>`;
         tableBody.appendChild(tr);
       });
     }
-    renderTable();
 
-    function handleDetectedCode(text){
+    async function handleDetectedCode(text){
       const nowTime = Date.now();
-      if(nowTime - lastScanTime < 3000){ 
-        return; // ignore scans if within 3s cooldown
-      }
+      if(nowTime - lastScanTime < 3000) return; // 3s cooldown
       lastScanTime = nowTime;
 
-      const now=new Date().toISOString();
-      if(scans[text]){
-        msg.style.color = "red";
-        msg.textContent = "This QR code has already been scanned!";
-        beep(3); // triple beep for duplicates
-        return;
+      const result = await saveScanToSheet(text);
+      const now = new Date().toISOString();
+      if(result.status === "duplicate"){
+        msg.textContent = "⚠️ Already scanned!"; msg.className="warn";
+        lastScanDiv.innerHTML=`Duplicate: ${text}<br>Time: ${now}`;
+        playTripleBeep();
+      } else {
+        msg.textContent = "✅ New scan saved!"; msg.className="ok";
+        lastScanDiv.innerHTML=`Code: ${text}<br>First: ${now}`;
+        playBeep();
       }
-      scans[text]={firstSeen:now};
-      localStorage.setItem('qr_scans',JSON.stringify(scans));
-      lastScanDiv.innerHTML=`Code: ${text}<br>First: ${now}`;
-      renderTable();
-      msg.style.color = "lightgreen";
-      msg.textContent = "New code scanned";
-      beep(1); // single beep for new scan
+      renderTable(await loadScansFromSheet());
     }
 
     document.getElementById('startBtn').onclick = async()=>{
-      initAudio();
-      if(audioCtx.state === 'suspended'){
-        await audioCtx.resume();
-      }
       if(!html5QrCode){
         html5QrCode=new Html5Qrcode("reader");
       }
@@ -131,11 +137,9 @@
           { fps:10, qrbox:250 },
           (decodedText)=>{ handleDetectedCode(decodedText); }
         );
-        msg.style.color = "yellow";
-        msg.textContent="Camera started";
+        msg.textContent="Camera started"; msg.className="";
       }catch(err){
         console.error(err);
-        msg.style.color = "red";
         msg.textContent="Failed to start camera";
       }
     };
@@ -143,42 +147,17 @@
     document.getElementById('stopBtn').onclick = async()=>{
       if(html5QrCode){
         await html5QrCode.stop();
-        msg.style.color = "yellow";
-        msg.textContent="Camera stopped";
+        msg.textContent="Camera stopped"; msg.className="";
       }
     };
 
-    document.getElementById('exportBtn').onclick = ()=>{
-      const rows=["code,firstSeen"];
-      for(const [code,e] of Object.entries(scans)){
-        rows.push(`"${code}",${e.firstSeen}`);
-      }
-      const blob=new Blob([rows.join("\n")],{type:"text/csv"});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement("a");
-      a.href=url;a.download="qr_scans.csv";a.click();
-      URL.revokeObjectURL(url);
+    document.getElementById('refreshBtn').onclick = async()=>{
+      renderTable(await loadScansFromSheet());
+      msg.textContent="History refreshed"; msg.className="";
     };
 
-    document.getElementById('clearBtn').onclick = ()=>{
-      if(confirm("Clear all data?")){
-        scans={}; localStorage.removeItem('qr_scans'); renderTable(); lastScanDiv.textContent="No scans yet";
-      }
-    };
-
-    document.getElementById('importFile').onchange = e=>{
-      const file=e.target.files[0];
-      if(!file) return;
-      const reader=new FileReader();
-      reader.onload=ev=>{
-        try{
-          scans=JSON.parse(ev.target.result);
-          localStorage.setItem('qr_scans',JSON.stringify(scans));
-          renderTable(); msg.style.color="yellow"; msg.textContent="Imported";
-        }catch(err){ msg.style.color="red"; msg.textContent="Invalid JSON"; }
-      };
-      reader.readAsText(file);
-    };
+    // Initial load
+    (async()=>{ renderTable(await loadScansFromSheet()); })();
   </script>
 </body>
 </html>
