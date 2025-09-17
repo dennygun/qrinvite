@@ -69,18 +69,26 @@
     }
     renderTable();
 
-    function playBeep(){
+    function playBeep(times=1){
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        oscillator.type = "sine";
-        oscillator.frequency.value = 800; // frequency in Hz
-        gainNode.gain.value = 0.1; // volume
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        oscillator.start();
-        oscillator.stop(ctx.currentTime + 0.2); // 0.2s beep
+        let count = 0;
+        function beepOnce(){
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const oscillator = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          oscillator.type = "sine";
+          oscillator.frequency.value = 800; 
+          gainNode.gain.value = 0.1; 
+          oscillator.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          oscillator.start();
+          oscillator.stop(ctx.currentTime + 0.2);
+          count++;
+          if(count < times){
+            setTimeout(beepOnce, 300); // 0.3s between beeps
+          }
+        }
+        beepOnce();
       } catch (e) {
         console.warn("Beep not supported:", e);
       }
@@ -95,6 +103,8 @@
 
       const now=new Date().toISOString();
       if(scans[text]){
+        // Already scanned → triple beep
+        playBeep(3);
         alert("This QR code has already been scanned!");
         return;
       }
@@ -102,7 +112,7 @@
       localStorage.setItem('qr_scans',JSON.stringify(scans));
       lastScanDiv.innerHTML=`Code: ${text}<br>First: ${now}`;
       renderTable();
-      playBeep(); // play beep only for new scans
+      playBeep(1); // single beep for new scans
     }
 
     document.getElementById('startBtn').onclick = async()=>{
