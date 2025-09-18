@@ -55,141 +55,130 @@
     const lastScanDiv = document.getElementById('lastScan');
     const tableBody = document.querySelector('#scanTable tbody');
 
-    let scans = {};
+    let scans = JSON.parse(localStorage.getItem('qr_scans')||'{}');
     let html5QrCode = null;
     let lastScanTime = 0; // cooldown tracker
-    const webAppUrl = 'https://script.google.com/macros/s/AKfycbzysyav0-bICOe5Yi8qMHYJzyxTtMmC9e2NA3QCkA1zcc49ykz-OF__5S87LTpnP9dvpQ/exec'; // <-- REPLACE THIS
 
     // Shared audio context
     let audioCtx = null;
-    function initAudio() {
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
+    function initAudio(){
+      if(!audioCtx){
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
     }
 
-    function beep(times = 1) {
-        if (!audioCtx) return;
-        const now = audioCtx.currentTime;
-        for (let i = 0; i < times; i++) {
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.type = "sine";
-            osc.frequency.value = 800;
-            gain.gain.value = 0.1;
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            const startT = now + i * 0.25;
-            osc.start(startT);
-            osc.stop(startT + 0.2);
-        }
+    function beep(times=1){
+      if(!audioCtx) return;
+      const now = audioCtx.currentTime;
+      for(let i=0;i<times;i++){
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 800;
+        gain.gain.value = 0.1;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        const startT = now + i*0.25;
+        osc.start(startT);
+        osc.stop(startT + 0.2);
+      }
     }
 
-    async function fetchScans() {
-        try {
-            const response = await fetch(`${webAppUrl}?action=getScans`);
-            const result = await response.json();
-            scans = result;
-            renderTable();
-        } catch (error) {
-            console.error('Error fetching scans:', error);
-            msg.textContent = 'Error fetching data from Google Sheet.';
-            msg.style.color = 'red';
-        }
+    function renderTable(){
+      tableBody.innerHTML = '';
+      Object.entries(scans).forEach(([code,e])=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML = `<td>${code}</td><td>${e.firstSeen}</td>`;
+        tableBody.appendChild(tr);
+      });
+    }
+    renderTable();
+
+    function handleDetectedCode(text){
+      const nowTime = Date.now();
+      if(nowTime - lastScanTime < 3000){ 
+        return; // ignore scans if within 3s cooldown
+      }
+      lastScanTime = nowTime;
+
+      const now=new Date().toISOString();
+      if(scans[text]){
+        msg.style.color = "red";
+        msg.textContent = "This QR code has already been scanned!";
+        beep(3); // triple beep for duplicates
+        return;
+      }
+      scans[text]={firstSeen:now};
+      localStorage.setItem('qr_scans',JSON.stringify(scans));
+      lastScanDiv.innerHTML=`Code: ${text}<br>First: ${now}`;
+      renderTable();
+      msg.style.color = "lightgreen";
+      msg.textContent = "New code scanned";
+      beep(1); // single beep for new scan
     }
 
-    function renderTable() {
-        tableBody.innerHTML = '';
-        Object.entries(scans).forEach(([code, e]) => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${code}</td><td>${e.firstSeen}</td>`;
-            tableBody.appendChild(tr);
-        });
-    }
-
-    async function handleDetectedCode(text) {
-        const nowTime = Date.now();
-        if (nowTime - lastScanTime < 3000) {
-            return; // ignore scans if within 3s cooldown
-        }
-        lastScanTime = nowTime;
-
-        const now = new Date().toISOString();
-        if (scans[text]) {
-            msg.style.color = "red";
-            msg.textContent = "This QR code has already been scanned!";
-            beep(3); // triple beep for duplicates
-            return;
-        }
-
-        const response = await fetch(`${webAppUrl}?action=recordScan&code=${encodeURIComponent(text)}&firstSeen=${encodeURIComponent(now)}`);
-        const result = await response.text();
-
-        if (result.trim() === 'success') {
-            scans[text] = { firstSeen: now };
-            lastScanDiv.innerHTML = `Code: ${text}<br>First: ${now}`;
-            renderTable();
-            msg.style.color = "lightgreen";
-            msg.textContent = "New code scanned";
-            beep(1); // single beep for new scan
-        } else if (result.trim() === 'duplicate') {
-            msg.style.color = "red";
-            msg.textContent = "This QR code has already been scanned!";
-            beep(3);
-        } else {
-            msg.style.color = "red";
-            msg.textContent = "Failed to record scan.";
-        }
-    }
-
-    document.getElementById('startBtn').onclick = async () => {
-        initAudio();
-        if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-        }
-        if (!html5QrCode) {
-            html5QrCode = new Html5Qrcode("reader");
-        }
-        try {
-            await html5QrCode.start(
-                { facingMode: "environment" },
-                { fps: 10, qrbox: 250 },
-                (decodedText) => { handleDetectedCode(decodedText); }
-            );
-            msg.style.color = "yellow";
-            msg.textContent = "Camera started";
-            await fetchScans(); // Load data on start
-        } catch (err) {
-            console.error(err);
-            msg.style.color = "red";
-            msg.textContent = "Failed to start camera";
-        }
+    document.getElementById('startBtn').onclick = async()=>{
+      initAudio();
+      if(audioCtx.state === 'suspended'){
+        await audioCtx.resume();
+      }
+      if(!html5QrCode){
+        html5QrCode=new Html5Qrcode("reader");
+      }
+      try{
+        await html5QrCode.start(
+          { facingMode:"environment" },
+          { fps:10, qrbox:250 },
+          (decodedText)=>{ handleDetectedCode(decodedText); }
+        );
+        msg.style.color = "yellow";
+        msg.textContent="Camera started";
+      }catch(err){
+        console.error(err);
+        msg.style.color = "red";
+        msg.textContent="Failed to start camera";
+      }
     };
 
-    document.getElementById('stopBtn').onclick = async () => {
-        if (html5QrCode) {
-            await html5QrCode.stop();
-            msg.style.color = "yellow";
-            msg.textContent = "Camera stopped";
-        }
+    document.getElementById('stopBtn').onclick = async()=>{
+      if(html5QrCode){
+        await html5QrCode.stop();
+        msg.style.color = "yellow";
+        msg.textContent="Camera stopped";
+      }
     };
 
-    document.getElementById('clearBtn').onclick = async () => {
-        if (confirm("Clear all data?")) {
-            await fetch(`${webAppUrl}?action=clearScans`);
-            scans = {};
-            renderTable();
-            lastScanDiv.textContent = "No scans yet";
-            msg.textContent = "All data cleared.";
-            msg.style.color = "yellow";
-        }
+    document.getElementById('exportBtn').onclick = ()=>{
+      const rows=["code,firstSeen"];
+      for(const [code,e] of Object.entries(scans)){
+        rows.push(`"${code}",${e.firstSeen}`);
+      }
+      const blob=new Blob([rows.join("\n")],{type:"text/csv"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;a.download="qr_scans.csv";a.click();
+      URL.revokeObjectURL(url);
     };
 
-    document.getElementById('exportBtn').style.display = 'none'; // No longer needed
-    document.getElementById('importFile').closest('label').style.display = 'none'; // No longer needed
+    document.getElementById('clearBtn').onclick = ()=>{
+      if(confirm("Clear all data?")){
+        scans={}; localStorage.removeItem('qr_scans'); renderTable(); lastScanDiv.textContent="No scans yet";
+      }
+    };
 
-    // Initial fetch to populate table on page load
-    fetchScans();
-</script>
+    document.getElementById('importFile').onchange = e=>{
+      const file=e.target.files[0];
+      if(!file) return;
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        try{
+          scans=JSON.parse(ev.target.result);
+          localStorage.setItem('qr_scans',JSON.stringify(scans));
+          renderTable(); msg.style.color="yellow"; msg.textContent="Imported";
+        }catch(err){ msg.style.color="red"; msg.textContent="Invalid JSON"; }
+      };
+      reader.readAsText(file);
+    };
+  </script>
 </body>
 </html>
